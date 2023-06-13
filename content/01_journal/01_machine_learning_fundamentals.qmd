@@ -1,0 +1,165 @@
+---
+title: "Machine Learning Fundamentals"
+author: "Tommy Weber"
+---
+
+### Loading Libraries
+
+```{r}
+#| message: false
+
+library(tidyverse)
+library(tidyquant)
+library(broom)
+library(umap)
+library(lubridate)
+library(plotly)
+```
+
+---
+
+### Loading Data
+
+```{r}
+sp_500_index_tbl <- read_rds("../../../sp_500_index_tbl.rds")
+sp_500_prices_tbl <- read_rds("../../../sp_500_prices_tbl.rds")
+
+sp_500_index_tbl %>% glimpse()
+sp_500_prices_tbl %>% glimpse()
+```
+
+---
+
+### Step 1
+
+```{r}
+sp_500_daily_returns_tbl <- sp_500_prices_tbl %>% 
+  select(symbol, date, adjusted) %>% 
+  filter(year(date) >= 2018) %>% 
+  group_by(symbol) %>% 
+  mutate(prev_adjusted = lag(adjusted)) %>% 
+  drop_na() %>% 
+  mutate(diff = adjusted - prev_adjusted) %>% 
+  mutate(pct_return = diff / prev_adjusted) %>% 
+  ungroup() %>% 
+  select(symbol, date, pct_return)
+
+sp_500_daily_returns_tbl
+```
+
+---
+
+### Step 2
+
+```{r}
+stock_date_matrix_tbl <- sp_500_daily_returns_tbl %>% 
+  pivot_wider(names_from = date, values_from = pct_return) %>% 
+  replace(is.na(.), 0)
+```
+
+---
+
+### Step 3
+
+```{r}
+kmeans_obj <- stock_date_matrix_tbl %>% 
+  select(-symbol) %>% 
+  kmeans(centers=4, nstart=20)
+
+kmeans_obj %>% glance()
+```
+
+---
+
+### Step 4
+
+```{r}
+kmeans_mapper <- function(center = 3) {
+    stock_date_matrix_tbl %>%
+        select(-symbol) %>%
+        kmeans(centers = center, nstart = 20)
+}
+
+k_means_mapped_tbl <- tibble(centers = 1:30) %>% 
+  mutate(k_means = map(centers, kmeans_mapper)) %>% 
+  mutate(glance = map(k_means, glance))
+
+k_means_mapped_tbl
+
+k_means_mapped_tbl %>% 
+  unnest(glance) %>%
+  
+  ggplot(aes(x = centers, y = tot.withinss)) +
+  
+  geom_point() +
+  geom_line() +
+
+  labs(
+    title = "Scree Plot"
+  ) +
+  
+  theme_gray()
+
+```
+
+---
+
+### Step 5
+
+```{r}
+#| message: false
+#| warning: false
+
+umap_results <- stock_date_matrix_tbl %>% 
+  select(-symbol) %>% 
+  umap()
+
+umap_results_tbl <- umap_results$layout %>% 
+  as_tibble() %>% 
+  bind_cols(stock_date_matrix_tbl %>% select(symbol), .)
+
+umap_results_tbl %>% 
+  ggplot(aes(x=V1, y=V2)) +
+  
+  geom_point(alpha=0.5) +
+  
+  labs(title = "UMAP Projection") +
+  
+  theme_tq()
+
+```
+
+---
+
+### Step 6
+
+```{r}
+
+k_means_10_obj <- k_means_mapped_tbl %>% 
+  pull(k_means) %>% 
+  pluck(10)
+
+umap_kmeans_results_tbl <- k_means_10_obj %>% 
+  augment(stock_date_matrix_tbl) %>% 
+  select(symbol, .cluster) %>% 
+  left_join(umap_results_tbl, join_by(symbol == symbol)) %>% 
+  left_join(sp_500_index_tbl %>% select(symbol, company, sector), join_by(symbol == symbol))
+
+
+g <- umap_kmeans_results_tbl %>% 
+  ggplot(aes(x = V1, y = V2, color = .cluster, text = company)) +
+  
+  geom_point(alpha = 0.5) +
+  
+  scale_color_manual(values = c("#3388FF", "#8833FF", "#33FF88", "#FF3333", "#FF3388",
+                                "#FF8833", "#FFFF33", "#FF33FF", "#33FFFF", "#333333")) +
+  
+  theme_gray() +
+  theme(legend.position="none")
+
+
+g %>%
+  ggplotly(tooltip = "text")
+```
+
+

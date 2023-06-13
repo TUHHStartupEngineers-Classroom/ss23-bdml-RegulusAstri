@@ -1,0 +1,116 @@
+---
+title: "Supervised ML-Regression"
+author: "Tommy Weber"
+---
+
+### Importing Libraries
+
+```{r}
+#| message: false
+
+library(tidyverse)
+library(parsnip)
+library(rsample)
+library(recipes)
+library(workflows)
+library(yardstick)
+```
+
+---
+
+### Defining Model
+
+```{r}
+
+lr_mod <- linear_reg(mode = "regression") %>% 
+  set_engine("lm")
+
+```
+
+---
+
+### Loading Data
+
+```{r}
+
+bike_features_tbl <- readRDS("../../../bike_features_tbl.rds")
+glimpse(bike_features_tbl)
+
+```
+
+---
+
+### Splitting Data
+
+```{r}
+
+set.seed(184375)
+
+split_obj  <- initial_split(bike_features_tbl, prop = 0.8)
+
+train_tbl <- training(split_obj)
+test_tbl <- testing(split_obj)
+
+train_tbl <- train_tbl %>% set_names(str_replace_all(names(train_tbl), " |-", "_"))
+test_tbl  <- test_tbl  %>% set_names(str_replace_all(names(test_tbl),  " |-", "_"))
+
+```
+
+---
+
+### Creating Recipe
+
+```{r}
+
+bikes_rec <- 
+  recipe(price ~ category_2 + frame_material + weight, data = train_tbl) %>% 
+  step_dummy(all_nominal())
+
+```
+
+---
+
+### Combining to Workflow
+
+```{r}
+
+bikes_wflow <- 
+  workflow() %>% 
+  add_model(lr_mod) %>% 
+  add_recipe(bikes_rec)
+
+```
+
+---
+
+### Fitting
+
+```{r}
+
+bikes_fit <- bikes_wflow %>% 
+  fit(data = train_tbl)
+
+```
+
+---
+
+### Evaluation
+
+```{r}
+
+calc_metrics <- function(model, new_data = test_tbl) {
+
+    model %>%
+        predict(new_data = new_data) %>%
+
+        bind_cols(new_data %>% select(price)) %>%
+        yardstick::metrics(truth = price, estimate = .pred)
+}
+
+calc_metrics(bikes_fit, new_data = test_tbl)
+
+```
+
+
+
+

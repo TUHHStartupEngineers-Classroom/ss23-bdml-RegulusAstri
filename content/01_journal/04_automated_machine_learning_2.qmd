@@ -1,0 +1,131 @@
+---
+title: "Automated Machine Learning with H20 (II)"
+author: "Tommy Weber"
+---
+
+### Importing Libraries
+
+```{r}
+#| message: false
+
+library(tidyverse)
+library(readxl)
+library(rsample)
+library(recipes)
+library(h2o)
+
+```
+
+---
+
+### Initializing H2O
+
+```{r}
+#| message: false
+#| output: false
+
+h2o.init()
+set.seed(seed = 1113)
+
+```
+
+---
+
+### Loading and Splitting Data
+
+```{r}
+
+product_backorder_tbl <- read.csv("../../../product_backorders.csv")
+
+split_obj <- rsample::initial_split(product_backorder_tbl, prop = 0.85)
+
+train_readable_tbl <- training(split_obj)
+test_readable_tbl <- testing(split_obj)
+
+```
+
+---
+
+### Recipe Definition and Application
+
+```{r}
+#| message: false
+#| output: false
+
+recipe_obj <- recipe(went_on_backorder ~ ., data = train_readable_tbl) %>% 
+  update_role(sku, new_role = "ID") %>% 
+  step_zv(all_predictors()) %>% 
+  step_mutate_at(all_nominal(), fn = as.factor) %>% 
+  prep()
+
+train_tbl <- bake(recipe_obj, new_data = train_readable_tbl)
+test_tbl <- bake(recipe_obj, new_data = test_readable_tbl)
+
+split_h2o <- h2o.splitFrame(as.h2o(train_tbl), ratios = c(0.85), seed = 1234)
+train_h2o <- split_h2o[[1]]
+valid_h2o <- split_h2o[[2]]
+test_h2o <- as.h2o(test_tbl)
+
+```
+
+---
+
+### Auto-Modeling
+
+```{r}
+#| message: false
+#| output: false
+
+y <- "went_on_backorder"
+x <- setdiff(names(train_h2o), c(y, "sku"))
+
+automl_models_h2o <- h2o.automl(
+  x = x,
+  y = y,
+  training_frame = train_h2o,
+  validation_frame = valid_h2o,
+  leaderboard_frame = test_h2o,
+  max_runtime_secs = 30,
+  nfolds = 5
+)
+
+```
+
+```{r}
+#| message: false
+
+automl_models_h2o@leaderboard
+
+```
+
+---
+
+### Prediction
+
+```{r}
+#| message: false
+#| output: false
+
+leader <- automl_models_h2o %>% h2o.get_best_model()
+
+predictions <- h2o.predict(leader, newdata = test_h2o)
+
+```
+
+```{r}
+
+predictions
+
+```
+
+---
+
+### Saving
+
+```{r}
+#| message: false
+#| output: false
+
+leader %>% h2o.saveModel("../../my_models/AutoML2_Model")
+
+```
